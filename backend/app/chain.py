@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .tron_address import is_valid_address
+from .tron_address import address_to_abi_param, is_valid_address
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,16 @@ class UsdtTransfer:
 
 class ChainError(RuntimeError):
     pass
+
+
+def parse_balance_of(payload: dict) -> int:
+    """Result of a constant balanceOf(address) call -> micro-USDT."""
+    if not (payload.get("result") or {}).get("result"):
+        raise ChainError("balanceOf call failed")
+    values = payload.get("constant_result") or []
+    if not values or not values[0]:
+        raise ChainError("balanceOf returned no data")
+    return int(values[0], 16)
 
 
 def parse_free_energy(payload: dict) -> int:
@@ -138,8 +148,29 @@ class TronGridReader:
             return hit
         body = await self._get(f"/v1/accounts/{address}", {"only_confirmed": "true"})
         info = parse_account(address, body, self.usdt)
+        # A TRC20 transfer does NOT activate a TRON account, so the account
+        # record can be empty while the address holds USDT. Read the balance
+        # from the USDT contract itself — correct for any address.
+        usdt = await self.usdt_balance(address)
+        info = AccountInfo(info.address, info.activated, info.trx_sun, usdt)
         self.cache.set(key, info)
         return info
+
+    async def usdt_balance(self, address: str) -> int:
+        try:
+            resp = await self.client.post("/wallet/triggerconstantcontract", json={
+                # owner = the contract itself: always exists, unlike a fresh user address
+                "owner_address": self.usdt,
+                "contract_address": self.usdt,
+                "function_selector": "balanceOf(address)",
+                "parameter": address_to_abi_param(address),
+                "visible": True,
+            })
+        except Exception as exc:
+            raise ChainError("TRON node is unreachable") from exc
+        if resp.status_code >= 400:
+            raise ChainError(f"TRON node error {resp.status_code}")
+        return parse_balance_of(resp.json())
 
     async def free_energy(self, address: str) -> int:
         """Energy currently available from the platform's own staked TRX."""

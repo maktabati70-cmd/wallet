@@ -1,4 +1,6 @@
-from app.chain import parse_account, parse_free_energy, parse_history
+import pytest
+
+from app.chain import ChainError, parse_account, parse_balance_of, parse_free_energy, parse_history
 
 USDT = "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf"
 ME = "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH"
@@ -40,3 +42,14 @@ def test_free_energy():
     assert parse_free_energy({"EnergyLimit": 200_000, "EnergyUsed": 50_000}) == 150_000
     assert parse_free_energy({}) == 0
     assert parse_free_energy({"EnergyLimit": 10, "EnergyUsed": 20}) == 0
+
+
+def test_balance_of():
+    ok = {"result": {"result": True},
+          "constant_result": ["000000000000000000000000000000000000000000000000000000003b9aca00"]}
+    assert parse_balance_of(ok) == 1_000_000_000  # 1000 USDT
+    zero = {"result": {"result": True}, "constant_result": ["0" * 64]}
+    assert parse_balance_of(zero) == 0
+    for bad in ({}, {"result": {"result": False}}, {"result": {"result": True}, "constant_result": []}):
+        with pytest.raises(ChainError):
+            parse_balance_of(bad)
