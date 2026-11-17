@@ -75,13 +75,22 @@ jobs:
         run: flutter analyze --no-fatal-infos
       - name: Unit tests
         run: flutter test
+      - name: Check that the server is up (wakes the free instance)
+        continue-on-error: true
+        run: |
+          URL="${{ vars.API_BASE_URL || 'https://tron-wallet-api.onrender.com' }}"
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 60 "$URL/health"; then echo; curl -fsS "$URL/v1/config"; echo; exit 0; fi
+            echo "waiting for server ($i)"; sleep 10
+          done
+          exit 1
       - name: Build release APKs (one per CPU type, test-signed)
         # Flutter's generated project signs release builds with the debug key:
         # fine for testing, NOT for Google Play (Phase 5 adds real signing).
         # Set the repository variable API_BASE_URL (Settings → Secrets and variables
         # → Actions → Variables) to your server URL, e.g. https://xxx.onrender.com
         env:
-          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          API_BASE_URL: ${{ vars.API_BASE_URL || 'https://tron-wallet-api.onrender.com' }}
         run: |
           EXTRA=""
           if [ -n "$API_BASE_URL" ]; then EXTRA="--dart-define=API_BASE_URL=$API_BASE_URL"; fi
