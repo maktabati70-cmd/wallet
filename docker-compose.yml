@@ -1,0 +1,14 @@
+# Local development database only. Not a production deployment.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wallet_owner
+      POSTGRES_PASSWORD: dev_only_change_me
+      POSTGRES_DB: tron_wallet
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
