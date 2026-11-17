@@ -46,11 +46,11 @@ class WelcomeScreen extends StatelessWidget {
               child: const Text('I already have a wallet'),
             ),
             const SizedBox(height: 16),
-            Wrap(alignment: WrapAlignment.center, children: [
-              const Text('By continuing you agree to the ',
+            const Wrap(alignment: WrapAlignment.center, children: [
+              Text('By continuing you agree to the ',
                   style: TextStyle(fontSize: 12, color: AppColors.muted)),
               _Link('Terms', AppConfig.termsUrl),
-              const Text(' and ', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+              Text(' and ', style: TextStyle(fontSize: 12, color: AppColors.muted)),
               _Link('Privacy Policy', AppConfig.privacyPolicyUrl),
             ]),
           ]),

@@ -9,7 +9,7 @@ class TronAddress {
 
   static const String _alphabet =
       '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-  static final BigInt _58 = BigInt.from(58);
+  static final BigInt _base = BigInt.from(58);
   static const int prefix = 0x41;
 
   static Uint8List _sha256d(List<int> data) =>
@@ -23,8 +23,8 @@ class TronAddress {
     final out = StringBuffer();
     final chars = <String>[];
     while (n > BigInt.zero) {
-      chars.add(_alphabet[(n % _58).toInt()]);
-      n = n ~/ _58;
+      chars.add(_alphabet[(n % _base).toInt()]);
+      n = n ~/ _base;
     }
     for (final b in bytes) {
       if (b != 0) break;
@@ -39,7 +39,7 @@ class TronAddress {
     for (final ch in text.split('')) {
       final i = _alphabet.indexOf(ch);
       if (i < 0) return null;
-      n = n * _58 + BigInt.from(i);
+      n = n * _base + BigInt.from(i);
     }
     final body = <int>[];
     while (n > BigInt.zero) {
