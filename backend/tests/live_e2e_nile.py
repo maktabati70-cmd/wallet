@@ -2,7 +2,8 @@
 
 Uses the PUBLIC BIP39 test phrase ("abandon … about"), which holds test TRX
 and test USDT on Nile. Never use this phrase for anything real.
-  index 0 = sender, 1 = platform operator, 2 = treasury (fee wallet), 3 = recipient
+  index 0 = sender; operator / treasury / recipient use rarely-used high
+  indexes (public phrases get their low indexes hijacked by permission changes).
 
     PYTHONPATH=. python tests/live_e2e_nile.py
 """
@@ -22,7 +23,7 @@ from app.main import create_app
 from app.operator import Operator
 
 PHRASE = " ".join(["abandon"] * 11 + ["about"])
-KEYS = [crypto.private_key_from_mnemonic(PHRASE, i) for i in range(4)]
+KEYS = [crypto.private_key_from_mnemonic(PHRASE, i) for i in (0, 1777, 1778, 1779)]
 SENDER, OPERATOR, TREASURY, RECIPIENT = (crypto.address_from_private(k) for k in KEYS)
 NET = NETWORKS["nile"]
 
