@@ -1,5 +1,5 @@
 # Runs on every push: backend tests (with a real PostgreSQL), Flutter analyze/test,
-# and builds a debug APK you can download from the run's "Artifacts" section.
+# and builds small release APKs (per CPU type) you can download from the run's "Artifacts" section.
 name: CI
 
 on:
@@ -75,9 +75,17 @@ jobs:
         run: flutter analyze --no-fatal-infos
       - name: Unit tests
         run: flutter test
-      - name: Build debug APK
-        run: flutter build apk --debug
+      - name: Build release APKs (one per CPU type, test-signed)
+        # Flutter's generated project signs release builds with the debug key:
+        # fine for testing, NOT for Google Play (Phase 5 adds real signing).
+        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
+      - name: APK sizes
+        run: ls -lh build/app/outputs/flutter-apk/*.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: tron-wallet-debug-apk
-          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          name: tron-wallet-arm64-most-phones
+          path: mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tron-wallet-armv7-old-phones
+          path: mobile/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
