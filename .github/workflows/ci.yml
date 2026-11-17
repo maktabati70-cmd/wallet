@@ -1,0 +1,80 @@
+# Runs on every push: backend tests (with a real PostgreSQL), Flutter analyze/test,
+# and builds a debug APK you can download from the run's "Artifacts" section.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wallet_owner
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: tron_wallet
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wallet_owner"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql://wallet_owner:ci_only@localhost:5432/tron_wallet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Apply migrations
+        run: python -m app.migrate
+      - name: Admin CLI smoke test
+        run: |
+          python -m app.admin_cli show-fees
+          python -m app.admin_cli simulate --amount 100
+          python -m app.admin_cli verify-audit
+      - name: Tests
+        run: pytest -q
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android project files (existing files are kept)
+        run: flutter create . --platforms=android --org com.alshami --project-name tron_wallet
+      - name: Set minSdk 23
+        run: |
+          for f in android/app/build.gradle.kts android/app/build.gradle; do
+            [ -f "$f" ] && sed -i -E 's/minSdk(Version)? *=? *flutter\.minSdkVersion/minSdk = 23/' "$f" && grep -n "minSdk" "$f"
+          done
+      - run: flutter pub get
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+      - name: Unit tests
+        run: flutter test
+      - name: Build debug APK (testnet)
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tron-wallet-debug-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk

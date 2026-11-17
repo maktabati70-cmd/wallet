@@ -1,0 +1,25 @@
+# secrets
+.env
+*.env
+!.env.example
+*.jks
+*.keystore
+key.properties
+google-services.json
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# flutter
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/debug/
+mobile/android/app/release/
+mobile/pubspec.lock.bak
+.idea/
+*.iml
