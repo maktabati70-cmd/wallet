@@ -20,6 +20,8 @@ class RemoteConfig {
         isTestnet = j['is_testnet'] as bool,
         explorerTxUrl = j['explorer_tx_url'] as String,
         sendingEnabled = j['sending_enabled'] as bool,
+        usdtContract = j['usdt_contract'] as String,
+        treasuryAddress = (j['treasury_address'] as String?) ?? '',
         serviceFeePercent = (j['fees'] as Map)['service_fee_percent'] as String,
         minServiceFee = (j['fees'] as Map)['min_service_fee'] as String,
         maxServiceFee = (j['fees'] as Map)['max_service_fee'] as String,
@@ -31,6 +33,8 @@ class RemoteConfig {
   final bool isTestnet;
   final String explorerTxUrl;
   final bool sendingEnabled;
+  final String usdtContract;
+  final String treasuryAddress;
   final String serviceFeePercent;
   final String minServiceFee;
   final String maxServiceFee;
@@ -86,6 +90,9 @@ class FeeQuote {
         fromAddress = j['from_address'] as String,
         toAddress = j['to_address'] as String,
         amount = j['amount'] as String,
+        amountMicro = j['amount_micro'] as int,
+        recipientMicro = j['recipient_micro'] as int,
+        totalFeeMicro = j['total_fee_micro'] as int,
         serviceFee = j['service_fee'] as String,
         serviceFeePercent = j['service_fee_percent'] as String,
         resourceFee = j['resource_fee'] as String,
@@ -100,6 +107,9 @@ class FeeQuote {
   final String fromAddress;
   final String toAddress;
   final String amount;
+  final int amountMicro;
+  final int recipientMicro;
+  final int totalFeeMicro;
   final String serviceFee;
   final String serviceFeePercent;
   final String resourceFee;
@@ -108,6 +118,56 @@ class FeeQuote {
   final bool recipientIsNew;
   final String disclosure;
   final bool sendingEnabled;
+}
+
+class PreparedTx {
+  PreparedTx(Map<String, dynamic> j)
+      : purpose = j['purpose'] as String,
+        rawDataHex = j['raw_data_hex'] as String,
+        txid = j['txid'] as String,
+        to = j['to'] as String,
+        amountMicro = j['amount_micro'] as int;
+  final String purpose; // recipient | fee
+  final String rawDataHex;
+  final String txid;
+  final String to;
+  final int amountMicro;
+}
+
+class PreparedTransfer {
+  PreparedTransfer(Map<String, dynamic> j)
+      : transferId = j['transfer_id'] as String,
+        treasuryAddress = j['treasury_address'] as String,
+        transactions = (j['transactions'] as List)
+            .map((e) => PreparedTx(Map<String, dynamic>.from(e as Map)))
+            .toList();
+  final String transferId;
+  final String treasuryAddress;
+  final List<PreparedTx> transactions;
+}
+
+class TransferStatus {
+  TransferStatus(Map<String, dynamic> j)
+      : transferId = j['transfer_id'] as String,
+        status = j['status'] as String,
+        step = j['step'] as String,
+        failureReason = j['failure_reason'] as String?,
+        toAddress = j['to_address'] as String,
+        recipientMicro = j['recipient_micro'] as int,
+        feeMicro = j['fee_micro'] as int,
+        mainTxid = j['main_txid'] as String,
+        mainExplorerUrl = j['main_explorer_url'] as String;
+  final String transferId;
+  final String status; // prepared | processing | confirmed | failed | refund_needed | expired
+  final String step;
+  final String? failureReason;
+  final String toAddress;
+  final int recipientMicro;
+  final int feeMicro;
+  final String mainTxid;
+  final String mainExplorerUrl;
+
+  bool get finished => status != 'processing' && status != 'prepared';
 }
 
 /// Talks to our backend only. The backend never receives keys or phrases.
@@ -175,6 +235,25 @@ class ApiClient {
         .toList();
     return HistoryPage(items, j['next'] as String?);
   }
+
+  Future<PreparedTransfer> prepareTransfer(String quoteId) async =>
+      PreparedTransfer(await _post('/v1/transfers/prepare', {'quote_id': quoteId}));
+
+  Future<TransferStatus> submitTransfer({
+    required String transferId,
+    required String idempotencyKey,
+    required String recipientSignature,
+    required String feeSignature,
+  }) async =>
+      TransferStatus(await _post('/v1/transfers/submit', {
+        'transfer_id': transferId,
+        'idempotency_key': idempotencyKey,
+        'recipient_signature': recipientSignature,
+        'fee_signature': feeSignature,
+      }));
+
+  Future<TransferStatus> transferStatus(String transferId) async =>
+      TransferStatus(await _send(() => _http.get(_u('/v1/transfers/$transferId'))));
 
   Future<FeeQuote> quote({required String from, required String to, required String amount}) async =>
       FeeQuote(await _post('/v1/quotes', {'from_address': from, 'to_address': to, 'amount': amount}));

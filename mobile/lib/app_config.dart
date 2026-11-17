@@ -25,4 +25,15 @@ class AppConfig {
   static const String derivationPath = "m/44'/195'/0'/0/0";
 
   static const int pinLength = 6;
+
+  /// USDT contract per network, pinned in the app: the phone refuses to sign
+  /// a transfer on any other token contract, whatever the server says.
+  static const Map<String, String> usdtContracts = {
+    'nile': 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf',
+    'shasta': 'TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs',
+    'mainnet': 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+  };
+
+  /// Upper bound on TRX a signed transaction may burn (users hold none anyway).
+  static const int maxFeeLimitSun = 100000000;
 }

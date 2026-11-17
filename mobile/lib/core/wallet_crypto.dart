@@ -59,3 +59,6 @@ class WalletCrypto {
 
 /// Top-level entry point for `compute()` (runs in a background isolate).
 String deriveAddressInIsolate(String phrase) => WalletCrypto.addressFromMnemonic(phrase);
+
+/// `compute()` entry point: private key for signing (wipe it after use).
+Uint8List derivePrivateKeyInIsolate(String phrase) => WalletCrypto.privateKeyFromMnemonic(phrase);

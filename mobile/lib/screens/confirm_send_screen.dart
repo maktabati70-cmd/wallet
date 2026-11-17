@@ -3,11 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
+import '../core/send_flow.dart';
+import '../core/session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'transfer_status_screen.dart';
+import 'unlock_screen.dart';
 
 /// Shows the full fee breakdown and requires explicit confirmation.
-/// Phase 1: the final send is disabled (no signing/broadcast yet).
+/// After PIN re-entry the phone verifies, signs and submits the transfer.
 class ConfirmSendScreen extends StatefulWidget {
   const ConfirmSendScreen({super.key, required this.quote});
   final FeeQuote quote;
@@ -18,6 +22,9 @@ class ConfirmSendScreen extends StatefulWidget {
 
 class _ConfirmSendScreenState extends State<ConfirmSendScreen> {
   bool _checked = false;
+  bool _sending = false;
+  String? _stage;
+  String? _error;
   late Duration _left;
   Timer? _timer;
 
@@ -64,15 +71,40 @@ class _ConfirmSendScreenState extends State<ConfirmSendScreen> {
           icon: const Icon(Icons.info_outline),
           title: const Text('Sending not available yet'),
           content: const Text(
-            'This is a test build. Sending will be enabled in a later version, after the '
-            'security review is complete. No funds were moved.',
+            'Sending is not enabled on the server yet. No funds were moved.',
           ),
           actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
         ),
       );
       return;
     }
-    // Phase 3: requirePin() → sign locally → submit with quote id.
+    if (!await requirePin(context, title: 'Enter PIN to send')) return;
+    if (!mounted) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    _timer?.cancel(); // the quote is locked in once we start
+    try {
+      final status = await executeSend(
+        quote: widget.quote,
+        myAddress: WalletSession.instance.address ?? '',
+        onStage: (s) {
+          if (mounted) setState(() => _stage = s);
+        },
+      );
+      if (!mounted) return;
+      await Navigator.of(context).pushReplacement(MaterialPageRoute<bool>(
+        builder: (_) => TransferStatusScreen(initial: status),
+      ));
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _sending = false;
+          _error = '$e';
+        });
+      }
+    }
   }
 
   @override
@@ -138,9 +170,20 @@ class _ConfirmSendScreenState extends State<ConfirmSendScreen> {
             title: const Text('I have checked the recipient address and the amounts.'),
           ),
           const SizedBox(height: 8),
+          if (_error != null) ...[
+            Text(_error!, style: const TextStyle(color: AppColors.danger)),
+            const SizedBox(height: 8),
+          ],
           FilledButton(
-            onPressed: (_checked && !expired) ? _confirm : null,
-            child: Text(expired ? 'Quote expired — go back' : 'Confirm & send (${_left.inSeconds}s)'),
+            onPressed: (_checked && !expired && !_sending) ? _confirm : null,
+            child: _sending
+                ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const SizedBox(
+                        width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                    const SizedBox(width: 12),
+                    Text(_stage ?? 'Working…'),
+                  ])
+                : Text(expired ? 'Quote expired — go back' : 'Confirm & send (${_left.inSeconds}s)'),
           ),
         ]),
       ),

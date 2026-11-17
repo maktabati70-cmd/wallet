@@ -47,6 +47,10 @@ jobs:
       - name: Live Nile balanceOf check
         continue-on-error: true
         run: PYTHONPATH=. python tests/live_nile_check.py
+      - name: LIVE end-to-end send on Nile (public test wallet)
+        continue-on-error: true
+        timeout-minutes: 8
+        run: PYTHONPATH=. python tests/live_e2e_nile.py
 
   mobile:
     runs-on: ubuntu-latest

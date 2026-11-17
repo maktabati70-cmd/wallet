@@ -44,6 +44,10 @@ RELAYER_BANDWIDTH = 420
 ACTIVATION_ENERGY = 50_000          # one-time USDT approve() for the relayer
 ACTIVATION_BANDWIDTH = 315
 
+# Creating a brand-new TRON account (user received USDT but never TRX):
+# 1 TRX network account-creation fee + 0.1 TRX we send + bandwidth.
+ACCOUNT_CREATION_SUN = 1_200_000
+
 SUN_PER_TRX = 1_000_000
 BPS = 10_000
 CENT_MICRO = 10_000  # fees are rounded UP to whole cents (0.01 USDT)
@@ -153,7 +157,8 @@ def resources_needed(recipient_holds_usdt: bool, mode: DeliveryMode,
 def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
           mode: DeliveryMode = DeliveryMode.TWO_TRANSFERS,
           source: EnergySource = EnergySource.RENTED,
-          needs_activation: bool = False) -> FeeQuote:
+          needs_activation: bool = False,
+          sender_activated: bool = True) -> FeeQuote:
     """``source`` must reflect where the Energy will really come from (the
     caller checks the platform's free staked Energy first), so the resource
     fee always covers the real cost of this transfer."""
@@ -167,6 +172,8 @@ def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
 
     svc = service_fee(amount_micro, s)
     cost = resource_cost(energy, bandwidth, s, source)
+    if not sender_activated:
+        cost += ceil_div(ACCOUNT_CREATION_SUN * s.trx_price_micro, SUN_PER_TRX)
     res = round_up_cents(ceil_div(cost * (BPS + s.resource_margin_bps), BPS))
     total = svc + res
     recipient = amount_micro - total
@@ -186,5 +193,5 @@ def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
         recipient_holds_usdt=recipient_holds_usdt,
         mode=mode.value,
         energy_source=source.value,
-        activation_included=activation,
+        activation_included=activation or not sender_activated,
     )

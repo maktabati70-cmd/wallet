@@ -1,8 +1,9 @@
-"""TRON Wallet backend API (Phase 1).
+"""TRON Wallet backend API.
 
-Non-custodial: the server never sees or stores private keys or seed phrases.
-Phase 1 endpoints are read-only plus fee quoting. There is deliberately NO
-send/broadcast endpoint yet — sending is implemented in Phase 3.
+Non-custodial: the server never sees or stores users' private keys or seed
+phrases. Users sign on their phones; the server builds unsigned transactions,
+lends Energy/Bandwidth from the platform's operator wallet, and broadcasts.
+Sending is off unless SENDING_ENABLED=true (and mainnet stays blocked).
 
 Privacy: wallet addresses are sent in POST bodies (not URLs) so they do not
 end up in access logs, and they are not stored except inside fee quotes.
@@ -12,7 +13,9 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+import asyncio
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -21,7 +24,7 @@ from .chain import ChainError, ChainReader
 from .config import Settings, load_settings
 from .money import format_usdt, parse_usdt
 from .repository import Repository
-from .schemas import AddressRequest, HistoryRequest, QuoteRequest
+from .schemas import AddressRequest, HistoryRequest, PrepareRequest, QuoteRequest, SubmitRequest
 from .security import HSTS, MAX_BODY_BYTES, SECURITY_HEADERS, SlidingWindowLimiter, client_ip
 
 log = logging.getLogger("wallet")
@@ -35,7 +38,8 @@ RESOURCE_DISCLOSURE = (
 
 def create_app(settings: Settings | None = None,
                repo: Repository | None = None,
-               chain: ChainReader | None = None) -> FastAPI:
+               chain: ChainReader | None = None,
+               operator=None) -> FastAPI:
     settings = settings or load_settings()
 
     @asynccontextmanager
@@ -47,7 +51,22 @@ def create_app(settings: Settings | None = None,
         if chain is None:
             from .chain import TronGridReader
             chain = TronGridReader(settings.tron_rpc_url, settings.usdt_contract, settings.tron_api_key)
-        app.state.repo, app.state.chain = repo, chain
+        op = operator
+        if op is None and (settings.operator_private_key or settings.operator_mnemonic):
+            from .operator import Operator
+            op = Operator.from_settings(chain, settings.operator_private_key, settings.operator_mnemonic)
+        from .transfers import TransferService
+        app.state.repo, app.state.chain, app.state.operator = repo, chain, op
+        app.state.transfers = TransferService(settings, repo, chain, op)
+        if op is not None:
+            log.info("operator wallet: %s", op.address)
+            if settings.auto_stake and settings.tron_network != "mainnet":
+                async def _stake():
+                    try:
+                        await op.auto_stake()
+                    except Exception as exc:  # never block startup
+                        log.warning("auto-stake skipped: %s", exc)
+                asyncio.get_running_loop().create_task(_stake())
         yield
         if hasattr(chain, "aclose"):
             await chain.aclose()
@@ -70,7 +89,7 @@ def create_app(settings: Settings | None = None,
         ip = client_ip(dict(request.headers), request.client.host if request.client else None,
                        settings.trust_proxy_headers)
         ok, retry = limiter.allow(ip)
-        if ok and request.url.path == "/v1/quotes":
+        if ok and (request.url.path == "/v1/quotes" or request.url.path.startswith("/v1/transfers")):
             ok, retry = quote_limiter.allow(ip)
         if not ok:
             resp = JSONResponse({"detail": "too many requests"}, status_code=429)
@@ -92,8 +111,11 @@ def create_app(settings: Settings | None = None,
     # ------------------------------------------------------------------ public
     @app.get("/health")
     def health(request: Request):
+        op = request.app.state.operator
         return {"status": "ok", "network": settings.tron_network,
-                "database": _repo(request).ping(), "sending_enabled": False}
+                "database": _repo(request).ping(),
+                "sending_enabled": settings.sending_enabled and op is not None,
+                "operator_address": op.address if op else None}
 
     @app.get("/v1/config")
     def public_config(request: Request):
@@ -103,7 +125,8 @@ def create_app(settings: Settings | None = None,
             "is_testnet": settings.tron_network != "mainnet",
             "usdt_contract": settings.usdt_contract,
             "explorer_tx_url": settings.explorer_tx_url,
-            "sending_enabled": False,
+            "sending_enabled": settings.sending_enabled,
+            "treasury_address": settings.treasury_address,
             "min_app_version": settings.min_app_version,
             "fees": {
                 "service_fee_percent": f"{s.service_fee_bps / 100:.2f}",
@@ -174,15 +197,18 @@ def create_app(settings: Settings | None = None,
         needs_activation = mode == fees.DeliveryMode.RELAYER
         energy_needed, _ = fees.resources_needed(holds, mode, needs_activation)
         source = fees.EnergySource.RENTED
-        if settings.energy_account:
+        op = request.app.state.operator
+        energy_account = settings.energy_account or (op.address if op else "")
+        if energy_account:
             try:
-                if await chain.free_energy(settings.energy_account) >= energy_needed:
+                if await chain.free_energy(energy_account) >= energy_needed:
                     source = fees.EnergySource.STAKED
             except ChainError:
                 pass  # fall back to rented pricing: never under-charge
         try:
             q = fees.quote(amount, holds, schedule, mode=mode, source=source,
-                           needs_activation=needs_activation)
+                           needs_activation=needs_activation,
+                           sender_activated=sender.activated)
         except fees.QuoteError as exc:
             raise HTTPException(422, str(exc))
         quote_id, expires_at = await run_in_threadpool(
@@ -198,6 +224,9 @@ def create_app(settings: Settings | None = None,
             "from_address": body.from_address,
             "to_address": body.to_address,
             "amount": format_usdt(q.amount_micro),
+            "amount_micro": q.amount_micro,
+            "recipient_micro": q.recipient_micro,
+            "total_fee_micro": q.total_fee_micro,
             "service_fee": format_usdt(q.service_fee_micro),
             "service_fee_percent": f"{schedule.service_fee_bps / 100:.2f}",
             "resource_fee": format_usdt(q.resource_fee_micro),
@@ -210,7 +239,48 @@ def create_app(settings: Settings | None = None,
             "energy_source": q.energy_source,
             "activation_fee_included": q.activation_included,
             "resource_fee_disclosure": RESOURCE_DISCLOSURE,
-            "sending_enabled": False,
+            "sending_enabled": settings.sending_enabled,
         }
+
+    # ------------------------------------------------------------ sending
+    from .transfers import TransferError, public_view
+
+    def _err(exc: TransferError):
+        raise HTTPException(exc.status, exc.message)
+
+    @app.post("/v1/transfers/prepare")
+    async def prepare_transfer(body: PrepareRequest, request: Request):
+        try:
+            return await request.app.state.transfers.prepare(body.quote_id)
+        except TransferError as exc:
+            _err(exc)
+        except ChainError as exc:
+            raise HTTPException(503, str(exc))
+
+    @app.post("/v1/transfers/submit", status_code=202)
+    async def submit_transfer(body: SubmitRequest, request: Request, background: BackgroundTasks):
+        svc = request.app.state.transfers
+        try:
+            view, start = await svc.submit(body.transfer_id, body.idempotency_key,
+                                           body.recipient_signature, body.fee_signature)
+        except TransferError as exc:
+            _err(exc)
+        except ChainError as exc:
+            raise HTTPException(503, str(exc))
+        if start:
+            background.add_task(svc.process, body.transfer_id)
+        return view
+
+    @app.get("/v1/transfers/{transfer_id}")
+    async def transfer_status(transfer_id: str, request: Request):
+        import uuid
+        try:
+            uuid.UUID(transfer_id)
+        except ValueError:
+            raise HTTPException(404, "Transfer not found.")
+        t = _repo(request).get_transfer(transfer_id)
+        if not t:
+            raise HTTPException(404, "Transfer not found.")
+        return public_view(t, settings.explorer_tx_url)
 
     return app

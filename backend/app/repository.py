@@ -33,6 +33,13 @@ class Repository(Protocol):
                    q: FeeQuote, schedule_id: int, ttl_seconds: int) -> tuple[str, datetime]: ...
     def add_audit(self, actor: str, action: str, details: dict[str, Any]) -> None: ...
     def ping(self) -> bool: ...
+    def get_quote(self, quote_id: str) -> dict | None: ...
+    def get_transfer(self, transfer_id: str) -> dict | None: ...
+    def transfer_for_quote(self, quote_id: str) -> dict | None: ...
+    def create_transfer(self, **fields) -> dict: ...
+    def claim_transfer(self, transfer_id: str, idempotency_key: str,
+                       main_sig: str, fee_sig: str) -> bool: ...
+    def update_transfer(self, transfer_id: str, **fields) -> None: ...
 
 
 class PostgresRepository:
@@ -80,6 +87,50 @@ class PostgresRepository:
                 "INSERT INTO audit_log (actor, action, details) VALUES (%s, %s, %s::jsonb)",
                 (actor, action, json.dumps(details, sort_keys=True)),
             )
+
+    # ---- transfers (Phase 3) ----
+    def _one(self, sql: str, params: tuple) -> dict | None:
+        from psycopg.rows import dict_row
+        with self.pool.connection() as conn:
+            return conn.cursor(row_factory=dict_row).execute(sql, params).fetchone()
+
+    def get_quote(self, quote_id: str) -> dict | None:
+        return self._one("SELECT * FROM fee_quotes WHERE id = %s", (quote_id,))
+
+    def get_transfer(self, transfer_id: str) -> dict | None:
+        return self._one("SELECT * FROM transfers WHERE id = %s", (transfer_id,))
+
+    def transfer_for_quote(self, quote_id: str) -> dict | None:
+        return self._one("SELECT * FROM transfers WHERE quote_id = %s", (quote_id,))
+
+    def create_transfer(self, **f) -> dict:
+        cols = ", ".join(f)
+        marks = ", ".join(["%s"] * len(f))
+        return self._one(f"INSERT INTO transfers ({cols}) VALUES ({marks}) RETURNING *",
+                         tuple(f.values()))
+
+    def claim_transfer(self, transfer_id: str, idempotency_key: str,
+                       main_sig: str, fee_sig: str) -> bool:
+        """prepared -> processing exactly once; also burns the quote."""
+        with self.pool.connection() as conn, conn.transaction():
+            cur = conn.execute(
+                """UPDATE transfers SET status = 'processing', step = 'queued',
+                          idempotency_key = %s, main_signature = %s, fee_signature = %s,
+                          updated_at = now()
+                   WHERE id = %s AND status = 'prepared' AND expires_at > now()""",
+                (idempotency_key, main_sig, fee_sig, transfer_id))
+            if cur.rowcount != 1:
+                return False
+            conn.execute(
+                "UPDATE fee_quotes SET status = 'used' WHERE id = "
+                "(SELECT quote_id FROM transfers WHERE id = %s)", (transfer_id,))
+            return True
+
+    def update_transfer(self, transfer_id: str, **f) -> None:
+        sets = ", ".join(f"{k} = %s" for k in f)
+        with self.pool.connection() as conn:
+            conn.execute(f"UPDATE transfers SET {sets}, updated_at = now() WHERE id = %s",
+                         (*f.values(), transfer_id))
 
     # ---- admin-only operations (used by the CLI with the owner DB role) ----
     def insert_fee_schedule(self, s: FeeSchedule, actor: str, note: str) -> int:

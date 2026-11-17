@@ -92,3 +92,11 @@ def test_relayer_uses_less_energy_and_activation_charged_once():
 def test_stake_cost_cannot_exceed_rent():
     with pytest.raises(ValueError):
         FeeSchedule(**{**S.__dict__, "stake_energy_cost_sun": 61}).validate()
+
+
+def test_new_sender_account_pays_activation_once():
+    normal = quote(100_000_000, True, MARKET)
+    new = quote(100_000_000, True, MARKET, sender_activated=False)
+    assert new.activation_included and not normal.activation_included
+    assert new.resource_fee_micro > normal.resource_fee_micro
+    assert new.resource_fee_micro >= new.resource_cost_micro

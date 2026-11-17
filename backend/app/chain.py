@@ -201,5 +201,58 @@ class TronGridReader:
         self.cache.set(key, result)
         return result
 
+    # ------------------------------------------------------------ write side
+    async def _post(self, path: str, body: dict) -> dict:
+        try:
+            resp = await self.client.post(path, json=body)
+        except Exception as exc:
+            raise ChainError("TRON node is unreachable") from exc
+        if resp.status_code == 429:
+            raise ChainError("TRON node rate limit reached")
+        if resp.status_code >= 400:
+            raise ChainError(f"TRON node error {resp.status_code}")
+        return resp.json()
+
+    async def now_block(self):
+        from .tron_tx import RefBlock
+        b = await self._post("/wallet/getnowblock", {})
+        raw = b["block_header"]["raw_data"]
+        return RefBlock(number=int(raw["number"]), block_id=b["blockID"],
+                        timestamp_ms=int(raw["timestamp"]))
+
+    async def broadcast_hex(self, tx_hex: str) -> str:
+        r = await self._post("/wallet/broadcasthex", {"transaction": tx_hex})
+        if not r.get("result"):
+            msg = r.get("message", "")
+            try:
+                msg = bytes.fromhex(msg).decode("utf-8", "replace")
+            except ValueError:
+                pass
+            raise ChainError(f"broadcast rejected: {r.get('code', '')} {msg}".strip())
+        return r.get("txid", "")
+
+    async def tx_info(self, txid: str) -> dict:
+        """{} until the transaction is in a block."""
+        return await self._post("/wallet/gettransactioninfobyid", {"value": txid})
+
+    async def account_resource(self, address: str) -> dict:
+        return await self._post("/wallet/getaccountresource", {"address": address, "visible": True})
+
+    async def can_delegate_max(self, address: str, resource: int) -> int:
+        r = await self._post("/wallet/getcandelegatedmaxsize",
+                             {"owner_address": address, "type": resource, "visible": True})
+        return int(r.get("max_size", 0))
+
+    async def account_raw(self, address: str) -> dict:
+        """Account record (balance, frozenV2...) — {} if not activated."""
+        body = await self._get(f"/v1/accounts/{address}", {"only_confirmed": "true"})
+        data = body.get("data") or []
+        return data[0] if data else {}
+
+    def forget(self, address: str) -> None:
+        """Drop cached account data (after a transfer changed it)."""
+        self.cache._data.pop(("acct", address), None)
+        self.cache._data.pop(("energy", address), None)
+
     async def aclose(self) -> None:
         await self.client.aclose()

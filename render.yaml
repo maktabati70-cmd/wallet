@@ -26,6 +26,13 @@ services:
         sync: false
       - key: SUPPORT_EMAIL
         sync: false
+      # ---- real sending (see README "Enable sending") ----
+      - key: SENDING_ENABLED
+        value: "false"
+      - key: TREASURY_ADDRESS        # your fee wallet's PUBLIC address (key never on the server)
+        sync: false
+      - key: OPERATOR_MNEMONIC       # SECRET: 12 words of the small operator wallet (holds TRX for Energy)
+        sync: false
 
 databases:
   - name: tron-wallet-db
