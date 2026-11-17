@@ -80,6 +80,22 @@ cd backend && pytest -q
 python tests/derive_vector.py           # independent check of the mobile test vector
 ```
 
+## Deploy the backend (Render, free, testnet)
+
+1. Sign in to render.com with your GitHub account.
+2. **New → Blueprint** → choose this repository → **Apply**. `render.yaml`
+   creates the API (free web service) and a free PostgreSQL database; migrations
+   run automatically on start.
+3. Copy the service URL (e.g. `https://tron-wallet-api.onrender.com`) and open
+   `<URL>/health` — it should return `"status": "ok"`.
+4. In GitHub: **Settings → Secrets and variables → Actions → Variables → New
+   repository variable**: `API_BASE_URL` = the service URL. Re-run the CI workflow;
+   the new APKs will talk to your server.
+
+Free-tier limits: the service sleeps after 15 minutes idle (first request takes
+~1 minute) and the free database expires after 30 days. Use a paid instance or
+another host for anything beyond testing.
+
 ## Run the Android app
 
 Requirements: Flutter 3.27+ (Dart 3.6+), Android Studio / Android SDK.

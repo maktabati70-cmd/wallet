@@ -43,9 +43,13 @@ class SlidingWindowLimiter:
 
 
 def client_ip(headers: dict[str, str], peer: str | None, trust_proxy: bool) -> str:
-    """Client IP. X-Forwarded-For is honoured only behind a trusted proxy."""
+    """Client IP. X-Forwarded-For is honoured only behind ONE trusted proxy.
+
+    The proxy appends the real client IP as the LAST entry; earlier entries
+    can be forged by the client, so they are ignored.
+    """
     if trust_proxy:
         xff = headers.get("x-forwarded-for", "")
         if xff:
-            return xff.split(",")[0].strip()
+            return xff.split(",")[-1].strip()
     return peer or "unknown"

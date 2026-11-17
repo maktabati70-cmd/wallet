@@ -116,7 +116,8 @@ class ApiClient {
   static final ApiClient instance = ApiClient._();
 
   final http.Client _http = http.Client();
-  static const _timeout = Duration(seconds: 15);
+  // Generous: a free-tier server may need ~1 minute to wake up.
+  static const _timeout = Duration(seconds: 70);
   RemoteConfig? _config;
 
   Uri _u(String path) => Uri.parse('${AppConfig.apiBaseUrl}$path');
@@ -128,7 +129,7 @@ class ApiClient {
     } on SocketException {
       throw ApiException('No internet connection.');
     } on TimeoutException {
-      throw ApiException('The server took too long to respond.');
+      throw ApiException('The server is starting up. Please try again in a moment.');
     } on http.ClientException {
       throw ApiException('Could not reach the server.');
     }

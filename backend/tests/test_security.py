@@ -14,3 +14,6 @@ def test_client_ip_ignores_spoofed_header_by_default():
     h = {"x-forwarded-for": "1.2.3.4"}
     assert client_ip(h, "10.0.0.1", trust_proxy=False) == "10.0.0.1"
     assert client_ip(h, "10.0.0.1", trust_proxy=True) == "1.2.3.4"
+    # a client-forged first entry is ignored; the proxy-appended last one wins
+    forged = {"x-forwarded-for": "6.6.6.6, 1.2.3.4"}
+    assert client_ip(forged, "10.0.0.1", trust_proxy=True) == "1.2.3.4"

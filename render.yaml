@@ -1,0 +1,34 @@
+# Render Blueprint — deploys the backend API + PostgreSQL (TRON Nile testnet).
+# Render dashboard → New → Blueprint → pick this repository → Apply.
+services:
+  - type: web
+    name: tron-wallet-api
+    runtime: python
+    plan: free                 # sleeps after 15 min idle; ~1 min to wake up
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.migrate && uvicorn app.main:create_app --factory --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: APP_ENV
+        value: production
+      - key: TRON_NETWORK
+        value: nile
+      - key: TRUST_PROXY_HEADERS
+        value: "true"          # Render's proxy sets X-Forwarded-For
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tron-wallet-db
+          property: connectionString
+      - key: TRON_API_KEY      # optional, from trongrid.io (set in the dashboard)
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
+
+databases:
+  - name: tron-wallet-db
+    plan: free                 # free databases expire after 30 days — testing only
+    databaseName: tron_wallet
+    user: wallet_owner
