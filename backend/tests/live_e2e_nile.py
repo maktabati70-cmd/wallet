@@ -1,9 +1,10 @@
 """LIVE end-to-end send on TRON Nile testnet (run by CI; needs DATABASE_URL).
 
-Uses the PUBLIC BIP39 test phrase ("abandon … about"), which holds test TRX
-and test USDT on Nile. Never use this phrase for anything real.
-  index 0 = sender; operator / treasury / recipient use rarely-used high
-  indexes (public phrases get their low indexes hijacked by permission changes).
+Needs a PRIVATE testnet phrase in the env var NILE_E2E_MNEMONIC (GitHub
+secret) whose index 0 holds Nile test TRX and test USDT. (Public test phrases
+cannot be used: their accounts get hijacked by permission changes.)
+  index 0 = sender, 1 = operator, 2 = treasury, 3 = recipient (fresh account)
+Skips (exit 0) when the secret is not set.
 
     PYTHONPATH=. python tests/live_e2e_nile.py
 """
@@ -22,8 +23,11 @@ from app.config import NETWORKS, Settings
 from app.main import create_app
 from app.operator import Operator
 
-PHRASE = " ".join(["abandon"] * 11 + ["about"])
-KEYS = [crypto.private_key_from_mnemonic(PHRASE, i) for i in (0, 1777, 1778, 1779)]
+PHRASE = os.environ.get("NILE_E2E_MNEMONIC", "").strip()
+if not PHRASE:
+    print("NILE_E2E_MNEMONIC not set — skipping live end-to-end test")
+    sys.exit(0)
+KEYS = [crypto.private_key_from_mnemonic(PHRASE, i) for i in range(4)]
 SENDER, OPERATOR, TREASURY, RECIPIENT = (crypto.address_from_private(k) for k in KEYS)
 NET = NETWORKS["nile"]
 
