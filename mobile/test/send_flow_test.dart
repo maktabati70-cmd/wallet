@@ -59,4 +59,23 @@ void main() {
       throwsA(isA<TxVerificationError>()),
     );
   });
+
+  test('personal mode: exactly one transfer, no fee', () {
+    final ok = prepared([
+      {'purpose': 'recipient', 'raw_data_hex': rawHex, 'txid': txid, 'to': to, 'amount_micro': 96950000},
+    ]);
+    final digests = verifyPreparedTransfer(prepared: ok, quote: quote(), myAddress: me,
+        network: 'nile', expectedTreasury: '', now: at);
+    expect(digests.keys, ['recipient']);
+
+    final extra = prepared([
+      {'purpose': 'recipient', 'raw_data_hex': rawHex, 'txid': txid, 'to': to, 'amount_micro': 96950000},
+      {'purpose': 'fee', 'raw_data_hex': rawHex, 'txid': txid, 'to': to, 'amount_micro': 0},
+    ]);
+    expect(
+      () => verifyPreparedTransfer(prepared: extra, quote: quote(), myAddress: me,
+          network: 'nile', expectedTreasury: '', now: at),
+      throwsA(isA<TxVerificationError>()),
+    );
+  });
 }

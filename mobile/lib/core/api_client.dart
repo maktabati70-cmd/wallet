@@ -243,13 +243,13 @@ class ApiClient {
     required String transferId,
     required String idempotencyKey,
     required String recipientSignature,
-    required String feeSignature,
+    String? feeSignature,
   }) async =>
       TransferStatus(await _post('/v1/transfers/submit', {
         'transfer_id': transferId,
         'idempotency_key': idempotencyKey,
         'recipient_signature': recipientSignature,
-        'fee_signature': feeSignature,
+        if (feeSignature != null) 'fee_signature': feeSignature,
       }));
 
   Future<TransferStatus> transferStatus(String transferId) async =>

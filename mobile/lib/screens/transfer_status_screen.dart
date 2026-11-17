@@ -23,12 +23,15 @@ class _TransferStatusScreenState extends State<TransferStatusScreen> {
   Timer? _timer;
   int _errors = 0;
 
-  static const _steps = [
+  static const _allSteps = [
     ('providing', 'Preparing network resources'),
     ('sending_fee', 'Paying the fee'),
     ('sending', 'Sending to recipient'),
     ('done', 'Confirmed on the blockchain'),
   ];
+
+  List<(String, String)> get _steps =>
+      _t.feeMicro > 0 ? _allSteps : _allSteps.where((s) => s.$1 != 'sending_fee').toList();
 
   @override
   void initState() {
@@ -53,13 +56,17 @@ class _TransferStatusScreenState extends State<TransferStatusScreen> {
     }
   }
 
-  int get _stepIndex => switch (_t.step) {
-        'queued' || 'activating' || 'providing_energy' => 0,
-        'sending_fee' => 1,
-        'sending' => 2,
-        'done' => 4,
-        _ => 0,
-      };
+  int get _stepIndex {
+    final key = switch (_t.step) {
+      'queued' || 'activating' || 'providing_energy' => 'providing',
+      'sending_fee' => 'sending_fee',
+      'sending' => 'sending',
+      'done' => 'done',
+      _ => 'providing',
+    };
+    if (key == 'done') return _steps.length;
+    return _steps.indexWhere((s) => s.$1 == key).clamp(0, _steps.length);
+  }
 
   @override
   Widget build(BuildContext context) {

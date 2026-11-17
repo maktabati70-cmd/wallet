@@ -63,7 +63,7 @@ def create_app(settings: Settings | None = None,
             if settings.auto_stake and settings.tron_network != "mainnet":
                 async def _stake():
                     try:
-                        await op.auto_stake()
+                        await op.auto_stake(energy_share=0.85 if settings.collect_fees else 1.0)
                     except Exception as exc:  # never block startup
                         log.warning("auto-stake skipped: %s", exc)
                 asyncio.get_running_loop().create_task(_stake())
@@ -126,7 +126,8 @@ def create_app(settings: Settings | None = None,
             "usdt_contract": settings.usdt_contract,
             "explorer_tx_url": settings.explorer_tx_url,
             "sending_enabled": settings.sending_enabled,
-            "treasury_address": settings.treasury_address,
+            "collect_fees": settings.collect_fees,
+            "treasury_address": settings.treasury_address if settings.collect_fees else "",
             "min_app_version": settings.min_app_version,
             "fees": {
                 "service_fee_percent": f"{s.service_fee_bps / 100:.2f}",
@@ -195,7 +196,7 @@ def create_app(settings: Settings | None = None,
         # Phase 3 will check the user's allowance to the relayer; until then
         # assume first use so the activation cost is never under-charged.
         needs_activation = mode == fees.DeliveryMode.RELAYER
-        energy_needed, _ = fees.resources_needed(holds, mode, needs_activation)
+        energy_needed, _ = fees.resources_needed(holds, mode, needs_activation, settings.collect_fees)
         source = fees.EnergySource.RENTED
         op = request.app.state.operator
         energy_account = settings.energy_account or (op.address if op else "")
@@ -208,7 +209,8 @@ def create_app(settings: Settings | None = None,
         try:
             q = fees.quote(amount, holds, schedule, mode=mode, source=source,
                            needs_activation=needs_activation,
-                           sender_activated=sender.activated)
+                           sender_activated=sender.activated,
+                           collect_fees=settings.collect_fees)
         except fees.QuoteError as exc:
             raise HTTPException(422, str(exc))
         quote_id, expires_at = await run_in_threadpool(

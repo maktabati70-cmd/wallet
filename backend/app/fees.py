@@ -141,8 +141,11 @@ def resource_cost(energy: int, bandwidth: int, s: FeeSchedule,
 
 
 def resources_needed(recipient_holds_usdt: bool, mode: DeliveryMode,
-                     needs_activation: bool = False) -> tuple[int, int]:
+                     needs_activation: bool = False, collect_fees: bool = True) -> tuple[int, int]:
     """(energy, bandwidth) the platform must provide for one send."""
+    if not collect_fees:  # personal mode: one plain transfer, no fee transfer
+        main = ENERGY_TO_HOLDER if recipient_holds_usdt else ENERGY_TO_NEW_HOLDER
+        return main, BANDWIDTH_PER_TRC20_TRANSFER
     if mode == DeliveryMode.TWO_TRANSFERS:
         main = ENERGY_TO_HOLDER if recipient_holds_usdt else ENERGY_TO_NEW_HOLDER
         return main + ENERGY_TO_HOLDER, 2 * BANDWIDTH_PER_TRC20_TRANSFER
@@ -158,7 +161,8 @@ def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
           mode: DeliveryMode = DeliveryMode.TWO_TRANSFERS,
           source: EnergySource = EnergySource.RENTED,
           needs_activation: bool = False,
-          sender_activated: bool = True) -> FeeQuote:
+          sender_activated: bool = True,
+          collect_fees: bool = True) -> FeeQuote:
     """``source`` must reflect where the Energy will really come from (the
     caller checks the platform's free staked Energy first), so the resource
     fee always covers the real cost of this transfer."""
@@ -167,14 +171,17 @@ def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
     if amount_micro > s.max_send_micro:
         raise QuoteError("amount is above the maximum transfer amount")
 
-    activation = needs_activation and mode == DeliveryMode.RELAYER
-    energy, bandwidth = resources_needed(recipient_holds_usdt, mode, activation)
+    activation = needs_activation and mode == DeliveryMode.RELAYER and collect_fees
+    energy, bandwidth = resources_needed(recipient_holds_usdt, mode, activation, collect_fees)
 
-    svc = service_fee(amount_micro, s)
     cost = resource_cost(energy, bandwidth, s, source)
     if not sender_activated:
         cost += ceil_div(ACCOUNT_CREATION_SUN * s.trx_price_micro, SUN_PER_TRX)
-    res = round_up_cents(ceil_div(cost * (BPS + s.resource_margin_bps), BPS))
+    if collect_fees:
+        svc = service_fee(amount_micro, s)
+        res = round_up_cents(ceil_div(cost * (BPS + s.resource_margin_bps), BPS))
+    else:  # personal mode: the operator absorbs the cost
+        svc = res = 0
     total = svc + res
     recipient = amount_micro - total
     if recipient <= 0:
@@ -193,5 +200,5 @@ def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
         recipient_holds_usdt=recipient_holds_usdt,
         mode=mode.value,
         energy_source=source.value,
-        activation_included=activation or not sender_activated,
+        activation_included=collect_fees and (activation or not sender_activated),
     )

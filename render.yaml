@@ -29,6 +29,8 @@ services:
       # ---- real sending (see README "Enable sending") ----
       - key: SENDING_ENABLED
         value: "false"
+      - key: COLLECT_FEES            # false = personal mode (no fees, single transfer)
+        value: "true"
       - key: TREASURY_ADDRESS        # your fee wallet's PUBLIC address (key never on the server)
         sync: false
       - key: OPERATOR_MNEMONIC       # SECRET: 12 words of the small operator wallet (holds TRX for Energy)

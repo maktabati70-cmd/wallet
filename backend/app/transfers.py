@@ -31,7 +31,7 @@ log = logging.getLogger("wallet.transfers")
 FEE_LIMIT_SUN = 40_000_000          # max TRX a tx may burn (user has none anyway)
 TX_LIFETIME_MS = 10 * 60 * 1000     # signed transactions are valid for 10 minutes
 BANDWIDTH_TO_LEND = 800             # two TRC20 transfers ≈ 690 bytes
-ENERGY_MARGIN = 1.10
+ENERGY_MARGIN = 1.05
 
 
 class TransferError(Exception):
@@ -54,7 +54,7 @@ def public_view(t: dict, explorer: str) -> dict:
         "main_txid": t["main_txid"],
         "fee_txid": t["fee_txid"],
         "main_explorer_url": explorer + t["main_txid"],
-        "fee_explorer_url": explorer + t["fee_txid"],
+        "fee_explorer_url": (explorer + t["fee_txid"]) if t["fee_txid"] else None,
         "expires_at": t["expires_at"].isoformat(),
     }
 
@@ -64,7 +64,8 @@ class TransferService:
         self.settings, self.repo, self.chain, self.op = settings, repo, chain, operator
 
     def _require_enabled(self) -> None:
-        if not self.settings.sending_enabled or self.op is None or not self.settings.treasury_address:
+        needs_treasury = self.settings.collect_fees and not self.settings.treasury_address
+        if not self.settings.sending_enabled or self.op is None or needs_treasury:
             raise TransferError(503, "Sending is not enabled on this server yet.")
 
     # ------------------------------------------------------------- prepare
@@ -89,36 +90,39 @@ class TransferService:
         usdt = self.settings.usdt_contract
         main_raw = tron_tx.build_trc20_transfer(q["from_address"], usdt, q["to_address"],
                                                 q["recipient_micro"], ref, exp, ts, FEE_LIMIT_SUN)
-        fee_raw = tron_tx.build_trc20_transfer(q["from_address"], usdt, self.settings.treasury_address,
-                                               fee, ref, exp, ts + 1, FEE_LIMIT_SUN)
+        fee_raw = None
+        if fee > 0:
+            fee_raw = tron_tx.build_trc20_transfer(q["from_address"], usdt, self.settings.treasury_address,
+                                                   fee, ref, exp, ts + 1, FEE_LIMIT_SUN)
         t = self.repo.create_transfer(
             quote_id=quote_id, network=self.settings.tron_network,
             from_address=q["from_address"], to_address=q["to_address"],
-            treasury_address=self.settings.treasury_address,
+            treasury_address=self.settings.treasury_address if fee_raw else None,
             recipient_micro=q["recipient_micro"], fee_micro=fee,
             main_raw_hex=main_raw.hex(), main_txid=tron_tx.txid(main_raw),
-            fee_raw_hex=fee_raw.hex(), fee_txid=tron_tx.txid(fee_raw),
+            fee_raw_hex=fee_raw.hex() if fee_raw else None,
+            fee_txid=tron_tx.txid(fee_raw) if fee_raw else None,
             expires_at=datetime.fromtimestamp(exp / 1000, timezone.utc) - timedelta(seconds=60),
         )
         return self._prepared_view(t)
 
     def _prepared_view(self, t: dict) -> dict:
+        txs = [{"purpose": "recipient", "raw_data_hex": t["main_raw_hex"], "txid": t["main_txid"],
+                "to": t["to_address"], "amount_micro": t["recipient_micro"]}]
+        if t["fee_raw_hex"]:
+            txs.append({"purpose": "fee", "raw_data_hex": t["fee_raw_hex"], "txid": t["fee_txid"],
+                        "to": t["treasury_address"], "amount_micro": t["fee_micro"]})
         return {
             "transfer_id": str(t["id"]),
             "expires_at": t["expires_at"].isoformat(),
             "usdt_contract": self.settings.usdt_contract,
-            "treasury_address": t["treasury_address"],
-            "transactions": [
-                {"purpose": "recipient", "raw_data_hex": t["main_raw_hex"], "txid": t["main_txid"],
-                 "to": t["to_address"], "amount_micro": t["recipient_micro"]},
-                {"purpose": "fee", "raw_data_hex": t["fee_raw_hex"], "txid": t["fee_txid"],
-                 "to": t["treasury_address"], "amount_micro": t["fee_micro"]},
-            ],
+            "treasury_address": t["treasury_address"] or "",
+            "transactions": txs,
         }
 
     # ------------------------------------------------------------- submit
     async def submit(self, transfer_id: str, idempotency_key: str,
-                     main_sig_hex: str, fee_sig_hex: str) -> tuple[dict, bool]:
+                     main_sig_hex: str, fee_sig_hex: str | None) -> tuple[dict, bool]:
         """Returns (view, should_process)."""
         self._require_enabled()
         t = self.repo.get_transfer(transfer_id)
@@ -132,12 +136,16 @@ class TransferService:
             self.repo.update_transfer(transfer_id, status="expired", step="expired")
             raise TransferError(410, "The signed transaction expired. Please start again.")
 
+        has_fee = bool(t["fee_raw_hex"])
+        if has_fee != bool(fee_sig_hex):
+            raise TransferError(422, "Fee signature missing." if has_fee else "Unexpected fee signature.")
         try:
-            main_sig, fee_sig = bytes.fromhex(main_sig_hex), bytes.fromhex(fee_sig_hex)
+            checks = [(t["main_raw_hex"], t["main_txid"], bytes.fromhex(main_sig_hex))]
+            if has_fee:
+                checks.append((t["fee_raw_hex"], t["fee_txid"], bytes.fromhex(fee_sig_hex)))
         except ValueError:
             raise TransferError(422, "Invalid signature format.")
-        for raw_hex, tid, sig in ((t["main_raw_hex"], t["main_txid"], main_sig),
-                                  (t["fee_raw_hex"], t["fee_txid"], fee_sig)):
+        for raw_hex, tid, sig in checks:
             raw = bytes.fromhex(raw_hex)
             if tron_tx.txid(raw) != tid or tron_tx.parse_trc20_transfer(raw).owner != t["from_address"]:
                 raise TransferError(500, "Stored transaction is inconsistent.")
@@ -164,6 +172,8 @@ class TransferService:
         sender, upd = t["from_address"], (lambda **f: self.repo.update_transfer(transfer_id, **f))
         q = self.repo.get_quote(str(t["quote_id"]))
         energy_sun = bw_sun = 0
+        fee_info: dict = {}
+        has_fee = bool(t["fee_raw_hex"])
         try:
             upd(step="activating")
             if await self.op.ensure_activated(sender):
@@ -172,14 +182,16 @@ class TransferService:
             upd(step="providing_energy")
             energy_sun = await self.op.delegate(sender, tron_tx.ENERGY,
                                                 int(q["energy_units"] * ENERGY_MARGIN))
-            bw_sun = await self.op.delegate(sender, tron_tx.BANDWIDTH, BANDWIDTH_TO_LEND)
+            if has_fee:  # one transfer fits in the 600 free daily Bandwidth; two do not
+                bw_sun = await self.op.delegate(sender, tron_tx.BANDWIDTH, BANDWIDTH_TO_LEND)
             upd(energy_delegated_sun=energy_sun, bandwidth_delegated_sun=bw_sun)
 
-            upd(step="sending_fee")
-            fee_tx = tron_tx.signed_transaction(bytes.fromhex(t["fee_raw_hex"]),
-                                                bytes.fromhex(t["fee_signature"]))
-            await self.chain.broadcast_hex(fee_tx.hex())
-            fee_info = await self.op.wait(t["fee_txid"])
+            if has_fee:
+                upd(step="sending_fee")
+                fee_tx = tron_tx.signed_transaction(bytes.fromhex(t["fee_raw_hex"]),
+                                                    bytes.fromhex(t["fee_signature"]))
+                await self.chain.broadcast_hex(fee_tx.hex())
+                fee_info = await self.op.wait(t["fee_txid"])
         except ChainError as exc:
             log.warning("transfer %s failed before sending: %s", transfer_id, exc)
             upd(status="failed", step="failed", failure_reason=str(exc)[:300])
@@ -198,8 +210,9 @@ class TransferService:
             upd(status="confirmed", step="done", energy_used=used)
             self.repo.add_audit("api", "transfer.confirmed", {"transfer_id": transfer_id, "energy_used": used})
         except ChainError as exc:
-            log.error("transfer %s: fee taken but recipient transfer failed: %s", transfer_id, exc)
-            upd(status="refund_needed", step="failed", failure_reason=str(exc)[:300])
+            log.error("transfer %s: recipient transfer failed: %s", transfer_id, exc)
+            upd(status="refund_needed" if has_fee else "failed", step="failed",
+                failure_reason=str(exc)[:300])
             self.repo.add_audit("api", "transfer.refund_needed", {"transfer_id": transfer_id, "reason": str(exc)[:300]})
         finally:
             self.chain.forget(sender)

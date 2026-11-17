@@ -24,10 +24,13 @@ Map<String, Uint8List> verifyPreparedTransfer({
 }) {
   final token = AppConfig.usdtContracts[network];
   if (token == null) throw TxVerificationError('Unknown network');
-  if (expectedTreasury.isEmpty || prepared.treasuryAddress != expectedTreasury) {
+  final withFee = quote.totalFeeMicro > 0;
+  if (withFee && (expectedTreasury.isEmpty || prepared.treasuryAddress != expectedTreasury)) {
     throw TxVerificationError('Fee wallet does not match the server configuration');
   }
-  if (prepared.transactions.length != 2) throw TxVerificationError('Unexpected transaction set');
+  if (prepared.transactions.length != (withFee ? 2 : 1)) {
+    throw TxVerificationError('Unexpected transaction set');
+  }
 
   final nowMs = (now ?? DateTime.now()).millisecondsSinceEpoch;
   final digests = <String, Uint8List>{};
@@ -52,7 +55,7 @@ Map<String, Uint8List> verifyPreparedTransfer({
           throw TxVerificationError('Recipient or amount differs from what you confirmed');
         }
       case 'fee':
-        if (t.to != expectedTreasury || t.amount != quote.totalFeeMicro) {
+        if (!withFee || t.to != expectedTreasury || t.amount != quote.totalFeeMicro) {
           throw TxVerificationError('Fee differs from what you confirmed');
         }
       default:
@@ -62,7 +65,7 @@ Map<String, Uint8List> verifyPreparedTransfer({
     digests[tx.purpose] = digest;
     total += t.amount;
   }
-  if (total != quote.amountMicro || digests.length != 2) {
+  if (total != quote.amountMicro || digests.length != (withFee ? 2 : 1)) {
     throw TxVerificationError('Totals do not match the confirmed amount');
   }
   return digests;
@@ -100,10 +103,11 @@ Future<TransferStatus> executeSend({
   if (phrase == null) throw TxVerificationError('Wallet not found on this device');
   final key = await compute(derivePrivateKeyInIsolate, phrase);
   final String recipientSig;
-  final String feeSig;
+  final String? feeSig;
   try {
     recipientSig = TronTx.bytesToHex(TxSigner.sign(key, digests['recipient']!));
-    feeSig = TronTx.bytesToHex(TxSigner.sign(key, digests['fee']!));
+    final feeDigest = digests['fee'];
+    feeSig = feeDigest == null ? null : TronTx.bytesToHex(TxSigner.sign(key, feeDigest));
   } finally {
     key.fillRange(0, key.length, 0);
   }

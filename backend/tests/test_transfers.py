@@ -196,3 +196,25 @@ def test_disabled_when_not_configured():
     with pytest.raises(TransferError) as e:
         run(svc.prepare(str(uuid.uuid4())))
     assert e.value.status == 503
+
+
+def test_personal_mode_single_transfer():
+    settings = Settings(usdt_contract=USDT, sending_enabled=True, collect_fees=False,
+                        operator_private_key=OP_KEY.hex())
+    settings.validate()
+    repo, chain = Repo(), Chain(activated=True)
+    svc = TransferService(settings, repo, chain, Operator(chain, OP_KEY))
+    qid = repo.add_quote(recipient_micro=100_000_000, service_fee_micro=0, resource_fee_micro=0,
+                         energy_units=64_285)
+    prep = run(svc.prepare(qid))
+    assert [t["purpose"] for t in prep["transactions"]] == ["recipient"]
+    main = prep["transactions"][0]
+    with pytest.raises(TransferError):  # a fee signature is not expected
+        run(svc.submit(prep["transfer_id"], "k" * 20, sign(main), sign(main)))
+    _, start = run(svc.submit(prep["transfer_id"], "k" * 20, sign(main), None))
+    assert start
+    run(svc.process(prep["transfer_id"]))
+    t = repo.transfers[prep["transfer_id"]]
+    assert t["status"] == "confirmed" and t["bandwidth_delegated_sun"] == 0
+    user_txs = [r for r in chain.broadcasts if r == bytes.fromhex(main["raw_data_hex"])]
+    assert len(user_txs) == 1

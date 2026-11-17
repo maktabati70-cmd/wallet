@@ -57,4 +57,4 @@ class SubmitRequest(_Strict):
     transfer_id: str = Field(pattern=r"^[0-9a-fA-F-]{36}$")
     idempotency_key: str = Field(min_length=16, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     recipient_signature: str = Field(pattern=r"^[0-9a-fA-F]{130}$")
-    fee_signature: str = Field(pattern=r"^[0-9a-fA-F]{130}$")
+    fee_signature: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{130}$")

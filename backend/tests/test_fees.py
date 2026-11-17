@@ -100,3 +100,10 @@ def test_new_sender_account_pays_activation_once():
     assert new.activation_included and not normal.activation_included
     assert new.resource_fee_micro > normal.resource_fee_micro
     assert new.resource_fee_micro >= new.resource_cost_micro
+
+
+def test_personal_mode_charges_nothing_and_needs_half_the_energy():
+    q = quote(100_000_000, True, MARKET, collect_fees=False)
+    assert q.total_fee_micro == 0 and q.recipient_micro == 100_000_000
+    assert q.energy_units == fees.ENERGY_TO_HOLDER
+    assert not q.activation_included

@@ -67,6 +67,7 @@ class Settings:
     operator_private_key: str = ""         # hot operator wallet (Energy lending) — secret
     operator_mnemonic: str = ""            # alternative to the private key — secret
     auto_stake: bool = True                # testnet: stake idle operator TRX on startup
+    collect_fees: bool = True              # False = personal mode: no fees, no fee transaction
     allow_mainnet: bool = False
     sending_enabled: bool = False          # real sending (testnet first)
     trust_proxy_headers: bool = False      # only behind a trusted reverse proxy
@@ -95,8 +96,9 @@ class Settings:
                 "legal and Google Play reviews are complete."
             )
         if self.sending_enabled:
-            if not self.treasury_address:
-                raise RuntimeError("SENDING_ENABLED requires TREASURY_ADDRESS (your fee wallet)")
+            if self.collect_fees and not self.treasury_address:
+                raise RuntimeError("SENDING_ENABLED requires TREASURY_ADDRESS (your fee wallet) "
+                                   "unless COLLECT_FEES=false")
             if not (self.operator_private_key or self.operator_mnemonic):
                 raise RuntimeError("SENDING_ENABLED requires OPERATOR_PRIVATE_KEY or OPERATOR_MNEMONIC")
         if not is_valid_address(self.usdt_contract):
@@ -132,6 +134,7 @@ def load_settings(env_file: str | None = ".env") -> Settings:
         operator_private_key=os.environ.get("OPERATOR_PRIVATE_KEY", "").strip(),
         operator_mnemonic=os.environ.get("OPERATOR_MNEMONIC", "").strip(),
         auto_stake=_bool("AUTO_STAKE", True),
+        collect_fees=_bool("COLLECT_FEES", True),
         allow_mainnet=_bool("ALLOW_MAINNET", False),
         sending_enabled=_bool("SENDING_ENABLED", False),
         trust_proxy_headers=_bool("TRUST_PROXY_HEADERS", False),
