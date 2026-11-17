@@ -46,7 +46,7 @@ jobs:
         run: pytest -q
       - name: Live Nile balanceOf check
         continue-on-error: true
-        run: python tests/live_nile_check.py
+        run: PYTHONPATH=. python tests/live_nile_check.py
 
   mobile:
     runs-on: ubuntu-latest
