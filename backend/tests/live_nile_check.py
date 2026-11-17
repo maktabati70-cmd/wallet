@@ -14,6 +14,16 @@ async def main(address: str) -> None:
         usdt = await reader.usdt_balance(address)
         acct = await reader.get_account(address)
         print(f"{address}: usdt_micro={usdt} activated={acct.activated} trx_sun={acct.trx_sun}")
+        r = await reader.account_resource(address)
+        lim, w = int(r.get("TotalEnergyLimit", 0)), int(r.get("TotalEnergyWeight", 1))
+        print(f"Nile: {lim / max(w, 1):.2f} Energy per staked TRX per day "
+              f"(TotalEnergyLimit={lim}, TotalEnergyWeight={w})")
+        for extra in sys.argv[2:]:
+            raw = await reader.account_raw(extra)
+            res = await reader.account_resource(extra)
+            print(f"{extra}: balance={int(raw.get('balance', 0)) / 1e6} TRX "
+                  f"frozenV2={raw.get('frozenV2')} EnergyLimit={res.get('EnergyLimit', 0)} "
+                  f"EnergyUsed={res.get('EnergyUsed', 0)}")
     finally:
         await reader.aclose()
 

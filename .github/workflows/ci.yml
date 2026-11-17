@@ -46,7 +46,7 @@ jobs:
         run: pytest -q
       - name: Live Nile balanceOf check
         continue-on-error: true
-        run: PYTHONPATH=. python tests/live_nile_check.py
+        run: PYTHONPATH=. python tests/live_nile_check.py TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH TTJbLC9mbJ9eCMWsBSRMS6yKuHeJZzxUac
       - name: LIVE end-to-end send on Nile (optional secret)
         continue-on-error: true
         timeout-minutes: 8
