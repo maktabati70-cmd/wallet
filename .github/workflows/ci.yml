@@ -52,7 +52,7 @@ jobs:
         working-directory: mobile
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -65,7 +65,10 @@ jobs:
       - name: Set minSdk 23
         run: |
           for f in android/app/build.gradle.kts android/app/build.gradle; do
-            [ -f "$f" ] && sed -i -E 's/minSdk(Version)? *=? *flutter\.minSdkVersion/minSdk = 23/' "$f" && grep -n "minSdk" "$f"
+            if [ -f "$f" ]; then
+              sed -i -E 's/minSdk(Version)? *=? *flutter\.minSdkVersion/minSdk = 23/' "$f"
+              grep -n "minSdk" "$f"
+            fi
           done
       - run: flutter pub get
       - name: Analyze
