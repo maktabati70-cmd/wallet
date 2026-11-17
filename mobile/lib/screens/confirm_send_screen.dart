@@ -138,16 +138,20 @@ class _ConfirmSendScreenState extends State<ConfirmSendScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Column(children: [
                 InfoRow('Amount', '${q.amount} USDT'),
-                InfoRow('Service fee (${q.serviceFeePercent}%)', '− ${q.serviceFee} USDT'),
-                InfoRow(
-                  'Network resource fee',
-                  '− ${q.resourceFee} USDT',
-                  trailing: IconButton(
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.info_outline, size: 18),
-                    onPressed: _showResourceInfo,
+                if (q.totalFeeMicro > 0)
+                  InfoRow('Service fee (${q.serviceFeePercent}%)', '− ${q.serviceFee} USDT'),
+                if (!q.paidWithOwnTrx && q.totalFeeMicro > 0)
+                  InfoRow(
+                    'Network resource fee',
+                    '− ${q.resourceFee} USDT',
+                    trailing: IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.info_outline, size: 18),
+                      onPressed: _showResourceInfo,
+                    ),
                   ),
-                ),
+                if (q.paidWithOwnTrx)
+                  InfoRow('Network fee (from your TRX)', 'up to ${q.networkFeeTrx} TRX'),
                 const Divider(),
                 InfoRow('Total fees', '${q.totalFee} USDT'),
                 InfoRow('Recipient receives', '${q.recipientReceives} USDT', bold: true),
@@ -156,10 +160,13 @@ class _ConfirmSendScreenState extends State<ConfirmSendScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'You will not need TRX: we provide the network resources (Energy/Bandwidth) for '
-            'this transfer. Blockchain transfers cannot be reversed.',
-            style: TextStyle(color: AppColors.muted, fontSize: 13, height: 1.4),
+          Text(
+            q.paidWithOwnTrx
+                ? 'The TRON network fee is paid with TRX from your wallet (usually a bit less than '
+                    'shown). Blockchain transfers cannot be reversed.'
+                : 'You will not need TRX: we provide the network resources (Energy/Bandwidth) for '
+                    'this transfer. Blockchain transfers cannot be reversed.',
+            style: const TextStyle(color: AppColors.muted, fontSize: 13, height: 1.4),
           ),
           const SizedBox(height: 8),
           CheckboxListTile(

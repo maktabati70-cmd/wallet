@@ -114,7 +114,7 @@ def create_app(settings: Settings | None = None,
         op = request.app.state.operator
         return {"status": "ok", "network": settings.tron_network,
                 "database": _repo(request).ping(),
-                "sending_enabled": settings.sending_enabled and op is not None,
+                "sending_enabled": settings.sending_enabled,
                 "operator_address": op.address if op else None}
 
     @app.get("/v1/config")
@@ -196,16 +196,33 @@ def create_app(settings: Settings | None = None,
         # Phase 3 will check the user's allowance to the relayer; until then
         # assume first use so the activation cost is never under-charged.
         needs_activation = mode == fees.DeliveryMode.RELAYER
-        energy_needed, _ = fees.resources_needed(holds, mode, needs_activation, settings.collect_fees)
-        source = fees.EnergySource.RENTED
+        energy_needed, bw_needed = fees.resources_needed(holds, mode, needs_activation,
+                                                         settings.collect_fees)
         op = request.app.state.operator
-        energy_account = settings.energy_account or (op.address if op else "")
-        if energy_account:
+        try:
+            energy_fee, bw_fee = await chain.chain_params()
+        except ChainError as exc:
+            raise HTTPException(503, str(exc))
+        user_fee_sun = fees.network_fee_sun(energy_needed, bw_needed, energy_fee, bw_fee)
+
+        # 1) the sender has enough TRX -> they pay the network fee themselves
+        # 2) otherwise the platform lends Energy (own stake if free, else rented price)
+        # 3) no operator wallet configured -> the sender must add TRX
+        if sender.trx_sun >= user_fee_sun:
+            source = fees.EnergySource.OWN_TRX
+        elif op is not None or settings.energy_account:
+            source = fees.EnergySource.RENTED
+            energy_account = settings.energy_account or op.address
             try:
                 if await chain.free_energy(energy_account) >= energy_needed:
                     source = fees.EnergySource.STAKED
             except ChainError:
                 pass  # fall back to rented pricing: never under-charge
+        else:
+            have = sender.trx_sun / 1_000_000
+            raise HTTPException(422, f"Not enough TRX for the network fee: you need about "
+                                     f"{user_fee_sun / 1_000_000:.2f} TRX and have {have:.2f} TRX. "
+                                     f"Add TRX to your wallet and try again.")
         try:
             q = fees.quote(amount, holds, schedule, mode=mode, source=source,
                            needs_activation=needs_activation,
@@ -217,7 +234,8 @@ def create_app(settings: Settings | None = None,
             lambda: repo.save_quote(
                 network=settings.tron_network, from_address=body.from_address,
                 to_address=body.to_address, q=q, schedule_id=schedule_id,
-                ttl_seconds=settings.quote_ttl_seconds))
+                ttl_seconds=settings.quote_ttl_seconds,
+                network_fee_sun=user_fee_sun if source == fees.EnergySource.OWN_TRX else 0))
 
         return {
             "quote_id": quote_id,
@@ -239,6 +257,9 @@ def create_app(settings: Settings | None = None,
             "energy_units": q.energy_units,
             "delivery_mode": q.mode,
             "energy_source": q.energy_source,
+            "network_fee_payer": "you" if source == fees.EnergySource.OWN_TRX else "platform",
+            "network_fee_trx": f"{user_fee_sun / 1_000_000:.2f}" if source == fees.EnergySource.OWN_TRX else "0",
+            "sender_trx": f"{sender.trx_sun / 1_000_000:.2f}",
             "activation_fee_included": q.activation_included,
             "resource_fee_disclosure": RESOURCE_DISCLOSURE,
             "sending_enabled": settings.sending_enabled,

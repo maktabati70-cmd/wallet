@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from . import crypto, tron_tx
 from .chain import ChainError
 from .config import Settings
-from .operator import Operator
+from .operator import Operator, wait_for_tx
 
 log = logging.getLogger("wallet.transfers")
 
@@ -65,8 +65,11 @@ class TransferService:
 
     def _require_enabled(self) -> None:
         needs_treasury = self.settings.collect_fees and not self.settings.treasury_address
-        if not self.settings.sending_enabled or self.op is None or needs_treasury:
+        if not self.settings.sending_enabled or needs_treasury:
             raise TransferError(503, "Sending is not enabled on this server yet.")
+
+    def _sponsored(self, q: dict) -> bool:
+        return q["energy_source"] != "own_trx"
 
     # ------------------------------------------------------------- prepare
     async def prepare(self, quote_id: str) -> dict:
@@ -82,6 +85,8 @@ class TransferService:
             raise TransferError(404, "Quote not found.")
         if q["status"] != "quoted" or q["expires_at"] <= datetime.now(timezone.utc):
             raise TransferError(410, "This quote has expired. Please review the transfer again.")
+        if self._sponsored(q) and self.op is None:
+            raise TransferError(503, "Network fee sponsoring is not available. Add TRX to your wallet.")
 
         fee = q["service_fee_micro"] + q["resource_fee_micro"]
         ref = await self.chain.now_block()
@@ -156,6 +161,11 @@ class TransferService:
         balance = await self.chain.usdt_balance(t["from_address"])
         if balance < t["recipient_micro"] + t["fee_micro"]:
             raise TransferError(422, "Insufficient USDT balance.")
+        q = self.repo.get_quote(str(t["quote_id"]))
+        if not self._sponsored(q):
+            acct = await self.chain.get_account(t["from_address"])
+            if acct.trx_sun < q["network_fee_sun"]:
+                raise TransferError(422, "Not enough TRX left for the network fee.")
 
         if not self.repo.claim_transfer(transfer_id, idempotency_key, main_sig_hex, fee_sig_hex):
             raise TransferError(409, "This transfer was already submitted or expired.")
@@ -174,24 +184,26 @@ class TransferService:
         energy_sun = bw_sun = 0
         fee_info: dict = {}
         has_fee = bool(t["fee_raw_hex"])
+        sponsored = self._sponsored(q)
         try:
-            upd(step="activating")
-            if await self.op.ensure_activated(sender):
-                upd(activation_sent=True)
+            if sponsored:
+                upd(step="activating")
+                if await self.op.ensure_activated(sender):
+                    upd(activation_sent=True)
 
-            upd(step="providing_energy")
-            energy_sun = await self.op.delegate(sender, tron_tx.ENERGY,
-                                                int(q["energy_units"] * ENERGY_MARGIN))
-            if has_fee:  # one transfer fits in the 600 free daily Bandwidth; two do not
-                bw_sun = await self.op.delegate(sender, tron_tx.BANDWIDTH, BANDWIDTH_TO_LEND)
-            upd(energy_delegated_sun=energy_sun, bandwidth_delegated_sun=bw_sun)
+                upd(step="providing_energy")
+                energy_sun = await self.op.delegate(sender, tron_tx.ENERGY,
+                                                    int(q["energy_units"] * ENERGY_MARGIN))
+                if has_fee:  # one transfer fits in the 600 free daily Bandwidth; two do not
+                    bw_sun = await self.op.delegate(sender, tron_tx.BANDWIDTH, BANDWIDTH_TO_LEND)
+                upd(energy_delegated_sun=energy_sun, bandwidth_delegated_sun=bw_sun)
 
             if has_fee:
                 upd(step="sending_fee")
                 fee_tx = tron_tx.signed_transaction(bytes.fromhex(t["fee_raw_hex"]),
                                                     bytes.fromhex(t["fee_signature"]))
                 await self.chain.broadcast_hex(fee_tx.hex())
-                fee_info = await self.op.wait(t["fee_txid"])
+                fee_info = await wait_for_tx(self.chain, t["fee_txid"])
         except ChainError as exc:
             log.warning("transfer %s failed before sending: %s", transfer_id, exc)
             upd(status="failed", step="failed", failure_reason=str(exc)[:300])
@@ -204,7 +216,7 @@ class TransferService:
             main_tx = tron_tx.signed_transaction(bytes.fromhex(t["main_raw_hex"]),
                                                  bytes.fromhex(t["main_signature"]))
             await self.chain.broadcast_hex(main_tx.hex())
-            main_info = await self.op.wait(t["main_txid"])
+            main_info = await wait_for_tx(self.chain, t["main_txid"])
             used = sum(int((i.get("receipt") or {}).get("energy_usage_total", 0))
                        for i in (fee_info, main_info))
             upd(status="confirmed", step="done", energy_used=used)
@@ -220,6 +232,9 @@ class TransferService:
         await self._reclaim(transfer_id, sender, energy_sun, bw_sun)
 
     async def _reclaim(self, transfer_id: str, sender: str, energy_sun: int, bw_sun: int) -> None:
+        if self.op is None or (energy_sun <= 0 and bw_sun <= 0):
+            self.repo.update_transfer(transfer_id, resources_reclaimed=True)
+            return
         try:
             await self.op.undelegate(sender, tron_tx.ENERGY, energy_sun)
             await self.op.undelegate(sender, tron_tx.BANDWIDTH, bw_sun)

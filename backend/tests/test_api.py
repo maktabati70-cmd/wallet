@@ -27,7 +27,7 @@ class FakeRepo:
     def active_fee_schedule(self):
         return 1, S
 
-    def save_quote(self, **kw):
+    def save_quote(self, **kw):  # accepts network_fee_sun too
         self.quotes.append(kw)
         return "00000000-0000-0000-0000-000000000001", datetime.now(timezone.utc) + timedelta(seconds=60)
 
@@ -37,7 +37,7 @@ class FakeRepo:
 
 class FakeChain:
     def __init__(self):
-        self.accounts = {ME: AccountInfo(ME, True, 0, 500_000_000),
+        self.accounts = {ME: AccountInfo(ME, True, 50_000_000, 500_000_000),
                          OTHER: AccountInfo(OTHER, True, 0, 1)}
 
     async def get_account(self, address):
@@ -45,6 +45,9 @@ class FakeChain:
 
     async def free_energy(self, address):
         return 10_000_000
+
+    async def chain_params(self):
+        return 100, 1000
 
     async def usdt_history(self, address, limit, fingerprint):
         return [], None
@@ -106,8 +109,26 @@ def test_rate_limit():
 def test_quote_uses_staked_energy_when_available():
     settings = Settings(usdt_contract=USDT, rate_limit_per_minute=1000,
                         energy_account="TMVQGm1qAQYVdetCeGRRkTWYYrLXuHK2HC")
-    app = create_app(settings, repo=FakeRepo(), chain=FakeChain())
+    chain = FakeChain()
+    chain.accounts[ME] = AccountInfo(ME, True, 0, 500_000_000)  # no TRX of its own
+    app = create_app(settings, repo=FakeRepo(), chain=chain)
     with TestClient(app) as c:
         body = c.post("/v1/quotes", json={"from_address": ME, "to_address": OTHER,
                                           "amount": "100"}).json()
     assert body["energy_source"] == "staked"
+
+
+def test_quote_uses_own_trx_when_sender_has_enough(client):
+    body = client.post("/v1/quotes", json={"from_address": ME, "to_address": OTHER,
+                                           "amount": "100"}).json()
+    assert body["network_fee_payer"] == "you" and body["resource_fee"] == "0.00"
+
+
+def test_quote_without_trx_and_without_operator_asks_for_trx():
+    chain = FakeChain()
+    chain.accounts[ME] = AccountInfo(ME, True, 0, 500_000_000)
+    app = create_app(Settings(usdt_contract=USDT, rate_limit_per_minute=1000),
+                     repo=FakeRepo(), chain=chain)
+    with TestClient(app) as c:
+        r = c.post("/v1/quotes", json={"from_address": ME, "to_address": OTHER, "amount": "100"})
+    assert r.status_code == 422 and "TRX" in r.json()["detail"]

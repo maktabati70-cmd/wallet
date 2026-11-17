@@ -61,6 +61,7 @@ class DeliveryMode(str, Enum):
 class EnergySource(str, Enum):
     STAKED = "staked"
     RENTED = "rented"
+    OWN_TRX = "own_trx"   # the sender burns their own TRX; platform pays nothing
 
 
 @dataclass(frozen=True)
@@ -174,12 +175,16 @@ def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
     activation = needs_activation and mode == DeliveryMode.RELAYER and collect_fees
     energy, bandwidth = resources_needed(recipient_holds_usdt, mode, activation, collect_fees)
 
-    cost = resource_cost(energy, bandwidth, s, source)
+    if source == EnergySource.OWN_TRX:
+        cost = 0
+        sender_activated = True  # holding TRX means the account exists
+    else:
+        cost = resource_cost(energy, bandwidth, s, source)
     if not sender_activated:
         cost += ceil_div(ACCOUNT_CREATION_SUN * s.trx_price_micro, SUN_PER_TRX)
     if collect_fees:
         svc = service_fee(amount_micro, s)
-        res = round_up_cents(ceil_div(cost * (BPS + s.resource_margin_bps), BPS))
+        res = round_up_cents(ceil_div(cost * (BPS + s.resource_margin_bps), BPS)) if cost else 0
     else:  # personal mode: the operator absorbs the cost
         svc = res = 0
     total = svc + res
@@ -202,3 +207,8 @@ def quote(amount_micro: int, recipient_holds_usdt: bool, s: FeeSchedule, *,
         energy_source=source.value,
         activation_included=collect_fees and (activation or not sender_activated),
     )
+
+
+def network_fee_sun(energy: int, bandwidth: int, energy_fee_sun: int, bandwidth_fee_sun: int) -> int:
+    """TRX (sun) the sender burns when paying the network fee themselves, +10 %."""
+    return ceil_div((energy * energy_fee_sun + bandwidth * bandwidth_fee_sun) * 11, 10)

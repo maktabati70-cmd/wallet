@@ -99,8 +99,7 @@ class Settings:
             if self.collect_fees and not self.treasury_address:
                 raise RuntimeError("SENDING_ENABLED requires TREASURY_ADDRESS (your fee wallet) "
                                    "unless COLLECT_FEES=false")
-            if not (self.operator_private_key or self.operator_mnemonic):
-                raise RuntimeError("SENDING_ENABLED requires OPERATOR_PRIVATE_KEY or OPERATOR_MNEMONIC")
+            # No operator wallet = users pay the network fee with their own TRX.
         if not is_valid_address(self.usdt_contract):
             raise RuntimeError("USDT contract address is invalid")
         for name in ("treasury_address", "energy_account", "relayer_contract"):

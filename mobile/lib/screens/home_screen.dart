@@ -174,6 +174,11 @@ class _BalanceCard extends StatelessWidget {
                 '${balance == null ? '—' : Usdt.format(balance!.usdtMicro)} USDT',
                 style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w800),
               ),
+        if (balance != null) ...[
+          const SizedBox(height: 4),
+          Text('${Usdt.format(balance!.trxSun, minDecimals: 2)} TRX for network fees',
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+        ],
         const SizedBox(height: 14),
         InkWell(
           onTap: () => copyToClipboard(context, address, 'Address'),

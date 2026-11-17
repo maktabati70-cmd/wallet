@@ -30,7 +30,8 @@ SELECT id FROM (
 class Repository(Protocol):
     def active_fee_schedule(self) -> tuple[int, FeeSchedule]: ...
     def save_quote(self, *, network: str, from_address: str, to_address: str,
-                   q: FeeQuote, schedule_id: int, ttl_seconds: int) -> tuple[str, datetime]: ...
+                   q: FeeQuote, schedule_id: int, ttl_seconds: int,
+                   network_fee_sun: int = 0) -> tuple[str, datetime]: ...
     def add_audit(self, actor: str, action: str, details: dict[str, Any]) -> None: ...
     def ping(self) -> bool: ...
     def get_quote(self, quote_id: str) -> dict | None: ...
@@ -65,19 +66,20 @@ class PostgresRepository:
             raise RuntimeError("no fee schedule configured")
         return row[0], FeeSchedule(*row[1:])
 
-    def save_quote(self, *, network, from_address, to_address, q, schedule_id, ttl_seconds):
+    def save_quote(self, *, network, from_address, to_address, q, schedule_id, ttl_seconds,
+                   network_fee_sun=0):
         expires = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         with self.pool.connection() as conn:
             row = conn.execute(
                 """INSERT INTO fee_quotes (expires_at, network, from_address, to_address,
                        amount_micro, service_fee_micro, resource_fee_micro, recipient_micro,
                        resource_cost_micro, energy_units, recipient_holds_usdt, fee_schedule_id,
-                       delivery_mode, energy_source, activation_included)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, expires_at""",
+                       delivery_mode, energy_source, activation_included, network_fee_sun)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, expires_at""",
                 (expires, network, from_address, to_address, q.amount_micro,
                  q.service_fee_micro, q.resource_fee_micro, q.recipient_micro,
                  q.resource_cost_micro, q.energy_units, q.recipient_holds_usdt, schedule_id,
-                 q.mode, q.energy_source, q.activation_included),
+                 q.mode, q.energy_source, q.activation_included, network_fee_sun),
             ).fetchone()
         return str(row[0]), row[1]
 

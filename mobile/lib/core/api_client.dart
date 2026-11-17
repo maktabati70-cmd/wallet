@@ -100,7 +100,9 @@ class FeeQuote {
         recipientReceives = j['recipient_receives'] as String,
         recipientIsNew = j['recipient_is_new'] as bool,
         disclosure = j['resource_fee_disclosure'] as String,
-        sendingEnabled = j['sending_enabled'] as bool;
+        sendingEnabled = j['sending_enabled'] as bool,
+        networkFeePayer = (j['network_fee_payer'] as String?) ?? 'platform',
+        networkFeeTrx = (j['network_fee_trx'] as String?) ?? '0';
 
   final String id;
   final DateTime expiresAt;
@@ -118,6 +120,10 @@ class FeeQuote {
   final bool recipientIsNew;
   final String disclosure;
   final bool sendingEnabled;
+  final String networkFeePayer; // 'you' = paid with your TRX, 'platform' = sponsored
+  final String networkFeeTrx;
+
+  bool get paidWithOwnTrx => networkFeePayer == 'you';
 }
 
 class PreparedTx {

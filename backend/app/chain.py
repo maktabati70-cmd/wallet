@@ -231,6 +231,17 @@ class TronGridReader:
             raise ChainError(f"broadcast rejected: {r.get('code', '')} {msg}".strip())
         return r.get("txid", "")
 
+    async def chain_params(self) -> tuple[int, int]:
+        """(energy burn price, bandwidth burn price) in sun; cached for an hour."""
+        hit = self.cache.get(("params",))
+        if hit is not None:
+            return hit
+        r = await self._post("/wallet/getchainparameters", {})
+        params = {p.get("key"): int(p.get("value", 0)) for p in r.get("chainParameter", [])}
+        value = (params.get("getEnergyFee") or 100, params.get("getTransactionFee") or 1000)
+        self.cache._data[("params",)] = (time.monotonic() + 3600, value)
+        return value
+
     async def tx_info(self, txid: str) -> dict:
         """{} until the transaction is in a block."""
         return await self._post("/wallet/gettransactioninfobyid", {"value": txid})

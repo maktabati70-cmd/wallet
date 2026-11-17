@@ -42,8 +42,9 @@ class ReceiveScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           WarningCard(
-            text: 'Send only USDT (TRC20) on the $netLabel network to this address. '
-                'Other tokens or networks (e.g. ERC20, BEP20) may be lost permanently.',
+            text: 'Send only USDT (TRC20) or TRX on the $netLabel network to this address. '
+                'Keep some TRX here to pay network fees. Other tokens or networks '
+                '(e.g. ERC20, BEP20) may be lost permanently.',
           ),
           const SizedBox(height: 12),
           const Text(

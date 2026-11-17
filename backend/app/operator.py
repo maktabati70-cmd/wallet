@@ -22,6 +22,22 @@ TX_LIFETIME_MS = 60_000
 KEEP_LIQUID_SUN = 30_000_000       # keep 30 TRX unstaked for fees
 
 
+async def wait_for_tx(chain, txid: str, timeout: float = 60.0) -> dict:
+    """Wait until a transaction is in a block; raise ChainError if it failed."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        info = await chain.tx_info(txid)
+        if info.get("blockNumber"):
+            if info.get("result") == "FAILED":
+                raise ChainError(f"transaction {txid} failed: {info.get('resMessage', '')}")
+            receipt = (info.get("receipt") or {}).get("result")
+            if receipt and receipt != "SUCCESS":
+                raise ChainError(f"transaction {txid} failed: {receipt}")
+            return info
+        await asyncio.sleep(1.5)
+    raise ChainError(f"transaction {txid} not confirmed in time")
+
+
 class Operator:
     def __init__(self, chain: TronGridReader, private_key: bytes):
         self.chain = chain
@@ -45,20 +61,8 @@ class Operator:
         await self.chain.broadcast_hex(tron_tx.signed_transaction(raw, sig).hex())
         return tid
 
-    async def wait(self, txid: str, timeout: float = 45.0) -> dict:
-        """Wait until the transaction is in a block; raise if it failed."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            info = await self.chain.tx_info(txid)
-            if info.get("blockNumber"):
-                if info.get("result") == "FAILED":
-                    raise ChainError(f"transaction {txid} failed: {info.get('resMessage', '')}")
-                receipt = (info.get("receipt") or {}).get("result")
-                if receipt and receipt != "SUCCESS":
-                    raise ChainError(f"transaction {txid} failed: {receipt}")
-                return info
-            await asyncio.sleep(1.5)
-        raise ChainError(f"transaction {txid} not confirmed in time")
+    async def wait(self, txid: str, timeout: float = 60.0) -> dict:
+        return await wait_for_tx(self.chain, txid, timeout)
 
     async def ensure_activated(self, address: str) -> bool:
         """Create the account on-chain if needed. Returns True if we sent TRX."""

@@ -30,7 +30,7 @@ class Repo:
             "expires_at": datetime.now(timezone.utc) + timedelta(seconds=60),
             "from_address": USER, "to_address": TO, "recipient_micro": 96_000_000,
             "service_fee_micro": 500_000, "resource_fee_micro": 3_500_000,
-            "energy_units": 128_570, **over}
+            "energy_units": 128_570, "energy_source": "staked", "network_fee_sun": 0, **over}
         return qid
 
     def get_quote(self, qid):
@@ -74,6 +74,12 @@ class Chain:
 
     async def usdt_balance(self, a):
         return self.balance
+
+    async def get_account(self, a):
+        from app.chain import AccountInfo
+        return AccountInfo(a, True, self.trx, self.balance)
+
+    trx = 0
 
     def forget(self, a):
         pass
@@ -218,3 +224,41 @@ def test_personal_mode_single_transfer():
     assert t["status"] == "confirmed" and t["bandwidth_delegated_sun"] == 0
     user_txs = [r for r in chain.broadcasts if r == bytes.fromhex(main["raw_data_hex"])]
     assert len(user_txs) == 1
+
+
+def test_own_trx_needs_no_operator_and_no_delegation():
+    settings = Settings(usdt_contract=USDT, sending_enabled=True, collect_fees=False)
+    settings.validate()
+    repo, chain = Repo(), Chain(activated=True)
+    chain.trx = 20_000_000
+    svc = TransferService(settings, repo, chain, None)
+    qid = repo.add_quote(recipient_micro=100_000_000, service_fee_micro=0, resource_fee_micro=0,
+                         energy_units=64_285, energy_source="own_trx", network_fee_sun=7_500_000)
+    prep = run(svc.prepare(qid))
+    main = prep["transactions"][0]
+    run(svc.submit(prep["transfer_id"], "k" * 20, sign(main), None))
+    run(svc.process(prep["transfer_id"]))
+    assert repo.transfers[prep["transfer_id"]]["status"] == "confirmed"
+    assert chain.broadcasts == [bytes.fromhex(main["raw_data_hex"])]  # nothing else sent
+
+
+def test_own_trx_rejected_when_trx_spent_before_submit():
+    settings = Settings(usdt_contract=USDT, sending_enabled=True, collect_fees=False)
+    repo, chain = Repo(), Chain(activated=True)
+    chain.trx = 1_000_000
+    svc = TransferService(settings, repo, chain, None)
+    qid = repo.add_quote(service_fee_micro=0, resource_fee_micro=0, recipient_micro=100_000_000,
+                         energy_source="own_trx", network_fee_sun=7_500_000)
+    prep = run(svc.prepare(qid))
+    with pytest.raises(TransferError) as e:
+        run(svc.submit(prep["transfer_id"], "k" * 20, sign(prep["transactions"][0]), None))
+    assert e.value.status == 422
+
+
+def test_sponsored_quote_without_operator_is_refused():
+    settings = Settings(usdt_contract=USDT, sending_enabled=True, collect_fees=False)
+    svc = TransferService(settings, Repo(), Chain(), None)
+    qid = svc.repo.add_quote(service_fee_micro=0, resource_fee_micro=0, recipient_micro=100_000_000)
+    with pytest.raises(TransferError) as e:
+        run(svc.prepare(qid))
+    assert e.value.status == 503
